@@ -10,26 +10,37 @@ import java.util.ArrayList;
 
 public class JMeta {
 
-    private static final String USER_AGENT = "JMeta/1.0 (fedormocalov36@gmail.com)";
+    public static final String DEFAULT_USER_AGENT = "JMeta/1.0 (fedormocalov36@gmail.com)";
+    private String clientUserAgent = DEFAULT_USER_AGENT;
 
-    private static byte[] getResponse(URL url) throws IOException {
-
-        HttpURLConnection connection = openConnection(url);
-        InputStream in = connection.getInputStream();
-
-        return in.readAllBytes();
+    public JMeta(String clientUserAgent) {
+        this.clientUserAgent = clientUserAgent;
     }
 
-    private static HttpURLConnection openConnection(URL url) throws IOException {
+    public JMeta() {
 
-        HttpURLConnection connection = (HttpURLConnection) url.openConnection();
-        connection.setRequestProperty("User-Agent", USER_AGENT);
-        connection.setRequestProperty("Accept", "application/json");
-
-        return connection;
     }
 
-    public static void fetchCoverArt(MBTag tag) throws IOException {
+    private byte[] getResponse(URL url) throws IOException {
+        HttpURLConnection connection = null;
+        try {
+
+            connection = (HttpURLConnection) url.openConnection();
+            connection.setRequestProperty("User-Agent", clientUserAgent);
+            connection.setRequestProperty("Accept", "application/json");
+
+            byte[] bytes;
+            try (InputStream in = connection.getInputStream()) {
+                bytes = in.readAllBytes();
+            }
+            return bytes;
+
+        } finally {
+            if (connection != null) connection.disconnect();
+        }
+    }
+
+    public void fetchCoverArt(MBTag tag) throws IOException {
 
         final String urlString = String.format("https://coverartarchive.org/release/%s", tag.releaseId)
                 .replace(" ", "%20");
@@ -38,36 +49,21 @@ public class JMeta {
         tag.setCoverArt(parseCoverArt(new String(buffer)));
     }
 
-    public static ArrayList<MBTag> fetchTagList(String artist, String title, File outFile) throws IOException {
+    public ArrayList<MBTag> fetchTagList(String artist, String title, File outFile) throws IOException {
 
         final String urlString = String.format("https://musicbrainz.org/ws/2/recording/?query=\"%s\" AND artist:\"%s\"?inc=genres", title, artist)
                 .replace(" ", "%20");
 
         byte[] buffer = getResponse(new URL(urlString));
         if (outFile != null) {
-            FileOutputStream out = new FileOutputStream(outFile.getAbsolutePath());
-            out.write(buffer);
-            out.close();
+            try (FileOutputStream out = new FileOutputStream(outFile.getAbsolutePath())) {
+                out.write(buffer);
+            }
         }
-
         return parseRecordingMetadata(new String(buffer));
     }
 
-    public static ArrayList<MBTag> parseRecordingMetadata(File fileObj) throws IOException {
-
-        if (!fileObj.isFile()) {
-            System.err.println(fileObj.getName() + " is not a regular file");
-            return null;
-        }
-
-        FileInputStream in = new FileInputStream(fileObj);
-        byte[] buffer      = in.readAllBytes();
-        in.close();
-
-        return parseRecordingMetadata(new String(buffer));
-    }
-
-    private static MBCoverArt parseCoverArt(String jsonString) throws IOException {
+    private MBCoverArt parseCoverArt(String jsonString) throws IOException {
 
         Gson gson             = new Gson();
         JsonObject json       = gson.fromJson(jsonString, JsonObject.class);
@@ -77,15 +73,16 @@ public class JMeta {
         String imageUrl = imageEntry.get("image").getAsString();
         String mimeType = "image/" + imageUrl.substring(imageUrl.lastIndexOf(".") + 1);
 
-        URL url        = new URL(imageUrl);
-        InputStream in = url.openStream();
-        byte[] bytes   = in.readAllBytes();
-        in.close();
+        URL url = new URL(imageUrl);
+        byte[] bytes;
 
+        try (InputStream in = url.openStream()) {
+            bytes = in.readAllBytes();
+        }
         return new MBCoverArt(bytes, mimeType);
     }
 
-    private static ArrayList<MBTag> parseRecordingMetadata(String jsonString) {
+    private ArrayList<MBTag> parseRecordingMetadata(String jsonString) {
 
         Gson gson             = new Gson();
         JsonObject json       = gson.fromJson(jsonString, JsonObject.class);
